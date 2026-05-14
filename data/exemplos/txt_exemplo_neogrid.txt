@@ -1,0 +1,3 @@
+H|OC-EXEMPLO-001|Fornecedor Exemplo|00.000.000/0001-00|2026-05-20
+D|1|NG-001|Milho em graos|10.00|SC|25.50
+D|2|NG-002|Farelo de soja|5.00|SC|99.90
