@@ -11,7 +11,6 @@ import pandas as pd
 
 from parser_oc import PurchaseOrder
 
-DEFAULT_OUTPUT_DIR = Path("data/saida/txt_gerados")
 RECORD_SIZE = 200
 ALLOWED_STATUSES = {"encontrado_exato", "encontrado_aproximado"}
 

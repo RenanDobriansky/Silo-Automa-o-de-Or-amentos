@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 from rapidfuzz import fuzz
 
+from config import get_config
 from parser_oc import PurchaseOrderItem
 
 ITEM_COLUMN = "Item"
@@ -281,5 +282,4 @@ def _validate_required_columns(dataframe: pd.DataFrame) -> None:
 def _get_report_output_dir() -> Path:
     """Resolve a pasta padrao de saida dos relatorios."""
 
-    project_root = Path(__file__).resolve().parents[1]
-    return project_root / "data" / "saida" / "relatorios"
+    return get_config().output_reports_dir

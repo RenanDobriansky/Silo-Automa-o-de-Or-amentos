@@ -26,11 +26,29 @@ def preparar_tabela_produtos() -> tuple[Any, Path]:
 
     config = get_config()
     tabela_produtos_path = config.products_mapping_file
-    resultado_duplicatas = tratar_duplicatas_produtos(str(tabela_produtos_path))
+    try:
+        tratar_duplicatas_produtos(str(tabela_produtos_path))
+    except OSError as exc:
+        raise RuntimeError(
+            "Erro tecnico ao acessar a tabela de produtos no servidor. "
+            f"Verifique permissoes, bloqueio do arquivo ou disponibilidade de rede: {tabela_produtos_path}"
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(
+            "Falha ao preparar a tabela de produtos para processamento automatico. "
+            f"Arquivo analisado: {tabela_produtos_path}"
+        ) from exc
+
     caminho_produtos_unicos = config.output_reports_dir / "produtos_unicos.xlsx"
     caminho_revisao_duplicatas = config.output_reports_dir / "produtos_duplicados_para_revisao.xlsx"
 
-    df_depara = carregar_depara_produtos(str(caminho_produtos_unicos))
+    try:
+        df_depara = carregar_depara_produtos(str(caminho_produtos_unicos))
+    except OSError as exc:
+        raise RuntimeError(
+            "Erro tecnico ao carregar a tabela tratada de produtos. "
+            f"Verifique acesso ao arquivo: {caminho_produtos_unicos}"
+        ) from exc
     return df_depara, caminho_revisao_duplicatas
 
 
@@ -103,7 +121,7 @@ def processar_pdf(caminho_pdf: str | Path, df_depara: Any) -> list[dict[str, Any
                 "quantidade_itens": quantidade_itens,
                 "valor_total": valor_total,
                 "status": validacao_final["status"],
-                "caminho_txt": str(caminho_txt) if validacao_final["status"] == "ok" else "",
+                "caminho_txt": str(caminho_txt),
                 "caminho_relatorio": str(caminho_relatorio),
                 "erros": validacao_final["erros"],
             }

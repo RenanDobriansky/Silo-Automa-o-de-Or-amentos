@@ -12,7 +12,7 @@ O comportamento esperado e:
 - os arquivos TXT NeoGrid sao gerados automaticamente
 - os relatorios sao salvos
 - os PDFs originais sao arquivados na pasta de processados com o numero da OC no nome
-- erros ficam visiveis em pasta e relatorio, sem depender de aviso por e-mail neste primeiro momento
+- erros ficam visiveis em pasta, relatorio e log, sem depender de aviso por e-mail neste primeiro momento
 
 ## Ambiente
 
@@ -42,6 +42,7 @@ Recebe os PDFs novos enviados pelos usuarios.
 Regra:
 
 - somente arquivos ainda nao processados devem ficar aqui
+- arquivos ainda em copia podem aparecer aqui temporariamente e devem ser ignorados ate ficarem prontos
 
 ### `processando`
 
@@ -59,15 +60,16 @@ Recebe os PDFs processados com sucesso.
 Regra:
 
 - o arquivo deve ser renomeado com o numero da OC
-- padrao sugerido:
+- padrao:
   - `OC_<numero_oc>.pdf`
-- em caso de mais de uma OC no mesmo PDF:
-  - `OC_<numero_oc>_origem_<nome_original>.pdf`
-  - ou manter o PDF unico com nome do primeiro pedido e registrar os demais no log
+- em caso de conflito de nome:
+  - `OC_<numero_oc>_1.pdf`
+  - `OC_<numero_oc>_2.pdf`
 
 Observacao:
 
 - como os PDFs devem ser mantidos, essa pasta vira o historico operacional
+- se um PDF tiver mais de uma OC, ele sera arquivado uma vez com o primeiro numero de OC e as demais ficarao registradas no log
 
 ### `erro`
 
@@ -80,6 +82,7 @@ Casos esperados:
 - falha de leitura do PDF
 - erro de validacao de totais
 - problema de acesso a arquivo
+- falha de leitura da tabela de produtos
 
 ### `saida\txt_gerados`
 
@@ -98,7 +101,6 @@ Arquivos esperados:
 - `relatorio_conversao_OC_<numero_oc>.xlsx`
 - `produtos_unicos.xlsx`
 - `produtos_duplicados_para_revisao.xlsx`
-- possivel relatorio consolidado de execucao no futuro
 
 ### `apoio`
 
@@ -116,47 +118,61 @@ Recebe os logs tecnicos da execucao automatica.
 Arquivos previstos:
 
 - `automacao_oc_YYYY-MM-DD.log`
-- ou `execucao_YYYYMMDD_HHMMSS.log`
+- `.automacao_oc.lock`
 
 ## Fluxo Tecnico Da Automacao
 
 ### Fluxo Principal
 
-1. O agendador do Windows dispara a automacao.
-2. A automacao varre a pasta `entrada`.
-3. Cada PDF elegivel e movido para `processando`.
-4. O sistema carrega a tabela de produtos do servidor.
-5. O sistema trata duplicatas e carrega o De/Para.
-6. O sistema extrai o texto do PDF.
-7. O sistema parseia uma ou mais ordens de compra.
-8. O sistema gera o relatorio de conversao.
-9. O sistema valida produtos, totais e estrutura de saida.
-10. Se estiver tudo correto, gera o TXT NeoGrid.
-11. O PDF e movido para `processados` com nome padrao por OC.
-12. Se houver erro, o PDF vai para `erro`.
-13. O log da execucao e gravado em `logs`.
+1. O Agendador de Tarefas do Windows dispara a automacao.
+2. O runner tenta adquirir uma trava de execucao para impedir concorrencia.
+3. A automacao varre a pasta `entrada`.
+4. O sistema tenta carregar e preparar a tabela de produtos do servidor.
+5. Cada PDF encontrado passa pela validacao de arquivo pronto.
+6. Arquivos ainda em copia sao ignorados naquela rodada e permanecem em `entrada`.
+7. Cada PDF elegivel e movido para `processando`.
+8. O sistema extrai o texto do PDF.
+9. O sistema parseia uma ou mais ordens de compra.
+10. O sistema gera o relatorio de conversao.
+11. O sistema valida produtos, totais e estrutura de saida.
+12. Se estiver tudo correto, gera o TXT NeoGrid.
+13. O PDF e movido para `processados` com nome padrao por OC.
+14. Se houver erro, o PDF vai para `erro`.
+15. O log da execucao e gravado em `logs`.
+16. Ao final, a trava de execucao e liberada.
 
-## Componentes De Software Previsto
+## Componentes De Software
 
 ### `src/config.py`
-
-Devera suportar configuracao por ambiente para caminhos do servidor.
 
 Responsabilidades:
 
 - definir pasta raiz da automacao
 - apontar `entrada`, `processando`, `processados`, `erro`, `saida`, `apoio` e `logs`
 - localizar a tabela de produtos no servidor
+- expor o caminho da trava de execucao
+- expor os parametros da checagem de arquivo pronto
+
+Configuracoes importantes:
+
+- `AUTOMACAO_OC_ROOT`
+- `AUTOMACAO_OC_READY_CHECK_INTERVAL_SECONDS`
+- `AUTOMACAO_OC_READY_STABLE_CHECKS`
 
 ### `src/main.py`
 
-Pode continuar como ponto central do processamento de um PDF ou de uma pasta, mas deve ser chamado internamente pelo runner automatico.
+Ponto central do processamento de um PDF.
 
-### Novo runner automatico
+Responsabilidades:
 
-Sugestao de novo modulo:
+- preparar a tabela de produtos
+- processar um PDF individual
+- retornar status, relatorio, caminho do TXT e erros
+- manter o caminho do TXT informado mesmo em falha final, permitindo limpeza segura de saida parcial pelo runner
 
-- `src/auto_processar_pasta.py`
+### `src/auto_processar_pasta.py`
+
+Runner automatico do servidor.
 
 Responsabilidades:
 
@@ -166,21 +182,28 @@ Responsabilidades:
 - chamar o pipeline do projeto
 - mover para `processados` ou `erro`
 - renomear PDF com numero da OC
+- remover TXT parcial em caso de falha
+- diferenciar erro tecnico de erro de negocio
+- impedir duas execucoes simultaneas com arquivo `.lock`
 - registrar logs
 
 ### Logging
 
-Sugestao:
+Sugestao adotada:
 
 - usar o modulo `logging` do Python
 - salvar log em arquivo no servidor
 - registrar:
   - inicio da execucao
+  - fim da execucao
   - quantidade de PDFs encontrados
+  - arquivos ignorados por ainda estarem em copia
   - PDFs processados com sucesso
   - PDFs com erro
   - numero das OCs geradas
   - caminho dos TXTs
+  - bloqueio por concorrencia
+  - erro de inicializacao da tabela de produtos
   - motivo do erro quando houver
 
 ## Regras Operacionais
@@ -189,11 +212,23 @@ Sugestao:
 
 Antes de processar um PDF:
 
-- verificar se o arquivo nao esta em uso
-- verificar se o tamanho do arquivo estabilizou
-- mover o arquivo para `processando`
+- verificar se o arquivo pode ser aberto
+- verificar se o tamanho do arquivo estabilizou em mais de uma leitura
+- usar intervalo configuravel entre leituras
+- mover o arquivo para `processando` somente quando estiver pronto
 
-Isso reduz risco de processar arquivo ainda em copia.
+Configuracoes atuais:
+
+- `AUTOMACAO_OC_READY_CHECK_INTERVAL_SECONDS`
+- `AUTOMACAO_OC_READY_STABLE_CHECKS`
+
+### Regra De Concorrencia
+
+Antes de iniciar o lote:
+
+- o runner cria uma trava `.automacao_oc.lock`
+- se a trava ja existir, a execucao deve registrar o bloqueio no log e encerrar com seguranca
+- a trava deve ser removida ao final da execucao, inclusive quando houver erro controlado
 
 ### Regra De Renomeacao Do PDF Processado
 
@@ -211,9 +246,21 @@ Se houver conflito de nome:
 Se a automacao falhar:
 
 - nao gerar TXT parcial
+- remover qualquer TXT parcial que tenha sido criado antes da falha final
 - salvar relatorio quando possivel
 - mover o PDF para `erro`
 - registrar o motivo no log
+
+Classificacao esperada:
+
+- erro tecnico:
+  - problema de acesso a arquivo
+  - falha ao ler a tabela de produtos
+  - excecao inesperada no processamento
+- erro de negocio:
+  - produto nao encontrado
+  - item para revisao manual
+  - validacao bloqueando geracao do TXT
 
 ### Regra De Reprocessamento
 
@@ -222,36 +269,16 @@ Neste primeiro momento:
 - um arquivo que entrou em `erro` nao deve ser reprocessado automaticamente
 - o reprocessamento pode ser manual depois de ajuste no arquivo ou na tabela
 
-## Estrategia De Agendamento
-
-Recomendacao inicial:
-
-- usar o Agendador de Tarefas do Windows
-- executar a cada 5 minutos
-
-Comando esperado:
-
-- chamar o Python do servidor
-- executar um runner automatico dedicado
-
-Exemplo conceitual:
-
-`python -m src.auto_processar_pasta`
-
 ## Tratamento De Multiplas OCs No Mesmo PDF
 
 O parser atual ja suporta mais de uma ordem no mesmo arquivo.
 
-Para a automacao no servidor, a regra precisa ser explicita:
+Para a automacao no servidor:
 
 - gerar um TXT por OC encontrada
 - gerar um relatorio por OC encontrada
 - manter um unico PDF original arquivado
-
-Sugestao de comportamento:
-
-- mover o PDF para `processados`
-- renomear com o primeiro numero de OC
+- renomear o PDF com o primeiro numero de OC
 - registrar no log os demais numeros encontrados no mesmo arquivo
 
 ## Riscos E Cuidados
@@ -275,6 +302,28 @@ Isso e importante porque caminhos de rede podem ter comportamento diferente de p
 
 Como a pasta de rede possui espacos e acento, todos os caminhos devem ser tratados com `pathlib.Path` ou string bruta equivalente.
 
+### Tabela De Produtos No Servidor
+
+A tabela de produtos e um ponto critico de inicializacao.
+
+Cuidados:
+
+- o arquivo nao deve ficar bloqueado por uso manual no Excel no momento da execucao
+- erros de acesso devem aparecer como erro tecnico no log
+- se a tabela nao puder ser carregada, o lote deve encerrar sem processar PDFs daquela rodada
+
+## Estrategia De Agendamento
+
+Recomendacao inicial:
+
+- usar o Agendador de Tarefas do Windows
+- executar a cada 5 minutos
+- configurar para nao iniciar nova instancia
+
+Comando esperado:
+
+`python -m src.auto_processar_pasta`
+
 ## Etapas De Implantacao
 
 ### Etapa 1
@@ -287,7 +336,7 @@ Criar o runner automatico de pasta com movimentacao de arquivos.
 
 ### Etapa 3
 
-Adicionar logs e regras de arquivamento.
+Adicionar logs, trava de concorrencia e regras de arquivamento.
 
 ### Etapa 4
 
@@ -312,4 +361,5 @@ Ao final dessa fase, o processo deve funcionar assim:
 - o PDF vai para `processados`
 - se houver erro, o PDF vai para `erro`
 - a equipe acompanha tudo por pasta e log, sem precisar abrir terminal ou executar comandos manualmente
-
+- execucoes simultaneas indevidas sao bloqueadas
+- arquivos ainda em copia sao ignorados e tentados novamente na proxima rodada

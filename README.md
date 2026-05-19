@@ -1,42 +1,46 @@
 # silo-automacao
 
-Projeto Python para converter ordens de compra em PDF para arquivos TXT no padrao NeoGrid, com foco em importacao no ERP e operacao futura em servidor Windows.
+Conversao automatizada de ordens de compra em PDF para arquivos TXT no padrao NeoGrid, com foco em importacao no ERP e operacao futura em servidor Windows.
 
-## Visao Geral
+## Resumo
 
-O projeto recebe ordens de compra em PDF, interpreta os dados do documento, cruza os itens com uma tabela de produtos do ERP, aplica regras de conversao comercial e gera um arquivo TXT no layout NeoGrid.
+O projeto faz o fluxo completo abaixo:
 
-Hoje o projeto ja cobre:
+1. le a ordem de compra em PDF
+2. extrai e interpreta cabecalho, itens e totais
+3. cruza os itens com a tabela de produtos do ERP
+4. aplica regras de conversao comercial
+5. valida o resultado
+6. gera o TXT NeoGrid
+7. gera relatorios Excel para apoio e auditoria
 
-- extracao de texto de PDFs
-- parse de uma ou mais OCs por arquivo
-- tratamento da tabela de produtos
-- De/Para por similaridade
-- conversoes de quantidade e valor
-- validacoes antes da geracao do TXT
-- geracao de relatorios Excel
-- geracao do TXT NeoGrid
-- processamento em lote de uma pasta de PDFs
+Hoje o projeto ja funciona ponta a ponta para os exemplos reais trabalhados e tambem ja esta preparado para a etapa de automacao em servidor.
 
-Tambem ja existe documentacao para a proxima etapa de implantacao automatica no servidor Windows.
+## O Que O Projeto Entrega
 
-## Objetivo
+| Etapa | Descricao |
+| --- | --- |
+| Extracao | Leitura de PDFs com `pdfplumber` |
+| Parser | Interpretacao de uma ou mais OCs no mesmo PDF |
+| De/Para | Busca exata e aproximada na tabela de produtos |
+| Conversoes | Ajuste de quantidade, embalagem e valor |
+| Validacao | Bloqueio por revisao, nao encontrado e divergencia de total |
+| Saida | Geracao do TXT NeoGrid e relatorio de conversao |
+| Operacao | Processamento de um arquivo, de uma pasta e runner para servidor |
 
-Automatizar a conversao de ordens de compra em PDF para TXT no padrao NeoGrid, reduzindo digitacao manual, padronizando a integracao com o ERP e preparando o processo para rodar de forma autonoma no servidor da empresa.
+## Arquitetura Rapida
 
-## Escopo Atual
-
-O pipeline atual executa as seguintes etapas:
-
-1. Carrega a tabela de produtos.
-2. Trata duplicatas e inconsistencias do cadastro.
-3. Extrai o texto do PDF.
-4. Interpreta os dados da OC.
-5. Identifica os produtos na tabela do ERP.
-6. Aplica regras de conversao de quantidade, embalagem e valor.
-7. Gera um relatorio de conversao.
-8. Valida os dados processados.
-9. Gera o TXT NeoGrid.
+```text
+PDF da OC
+  -> extrair_pdf.py
+  -> parser_oc.py
+  -> tratar_duplicatas.py
+  -> produtos_depara.py
+  -> relatorio_processamento.py
+  -> validar_txt.py
+  -> gerar_txt_neogrid.py
+  -> TXT NeoGrid + relatorios
+```
 
 ## Estrutura Do Projeto
 
@@ -58,14 +62,17 @@ silo-automacao/
 |     |- ordem_compra_exemplo.pdf
 |     \- txt_exemplo_neogrid.txt
 |- docs/
-|  |- campos_mapeados.md
 |  |- desenho_tecnico_automacao_servidor.md
-|  |- layout_neogrid.md
+|  |- agendamento_windows_automacao_oc.md
+|  |- checklist_homologacao_automacao_oc.md
+|  |- guia_implantacao_operacao_servidor.md
 |  |- prompts_etapa_automacao_servidor.md
+|  |- layout_neogrid.md
 |  |- regras_conversao.md
-|  |- resumo_andamento_projeto.md
-|  \- tratamento_duplicatas.md
+|  |- tratamento_duplicatas.md
+|  \- resumo_andamento_projeto.md
 |- src/
+|  |- auto_processar_pasta.py
 |  |- config.py
 |  |- extrair_pdf.py
 |  |- gerar_txt_neogrid.py
@@ -76,6 +83,8 @@ silo-automacao/
 |  |- tratar_duplicatas.py
 |  \- validar_txt.py
 \- tests/
+   |- test_auto_processar_pasta.py
+   |- test_config.py
    |- test_extrair_pdf.py
    |- test_gerar_txt.py
    |- test_main.py
@@ -86,16 +95,16 @@ silo-automacao/
    \- test_validar_txt.py
 ```
 
-## Arquivos De Apoio
+## Arquivos Necessarios
 
-Arquivos necessarios para a operacao atual:
+Para o fluxo local e para a operacao no servidor, estes arquivos sao essenciais:
 
 - PDFs das ordens de compra
-- tabela de produtos do ERP
-- documento de layout NeoGrid
-- exemplos de TXT para comparacao e homologacao
+- `Tabela de produtos.xlsx`
+- `NeoGrid PEDIDOS.pdf`
+- TXT de exemplo para homologacao, quando necessario
 
-Localizacao atual no projeto:
+Localizacao padrao no projeto:
 
 - PDFs de entrada: `data/entrada/ordens_pdf`
 - tabela de produtos: `data/apoio/Tabela de produtos.xlsx`
@@ -104,12 +113,11 @@ Localizacao atual no projeto:
 
 ## Instalacao
 
-Crie um ambiente virtual e instale as dependencias:
-
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
 Dependencias principais:
@@ -135,102 +143,81 @@ python -m src.main "data/entrada/ordens_pdf/ordem_compra.pdf"
 python -m src.main "data/entrada/ordens_pdf"
 ```
 
+### Rodar o runner automatico do servidor
+
+```powershell
+python -m src.auto_processar_pasta
+```
+
 ## Saidas Geradas
 
-O processamento gera:
-
-- TXT final em `data/saida/txt_gerados`
-- relatorio de conversao em `data/saida/relatorios`
-- relatorio de duplicatas em `data/saida/relatorios`
-
-Padroes de nome:
-
-- TXT: `OC_<numero_oc>.txt`
-- relatorio de conversao: `relatorio_conversao_OC_<numero_oc>.xlsx`
+| Tipo | Local | Padrao de nome |
+| --- | --- | --- |
+| TXT final | `data/saida/txt_gerados` | `OC_<numero_oc>.txt` |
+| Relatorio de conversao | `data/saida/relatorios` | `relatorio_conversao_OC_<numero_oc>.xlsx` |
+| Relatorio de duplicatas | `data/saida/relatorios` | `produtos_unicos.xlsx` e `produtos_duplicados_para_revisao.xlsx` |
 
 ## Modulos Principais
 
 ### `src/extrair_pdf.py`
 
-Responsavel por:
-
-- abrir o PDF com `pdfplumber`
-- extrair o texto de todas as paginas
-- preservar a estrutura das linhas
-- salvar um `.txt` de apoio quando necessario
+- extrai o texto bruto do PDF
+- preserva a estrutura das linhas
+- pode salvar um `.txt` de apoio
 
 ### `src/parser_oc.py`
 
-Responsavel por interpretar o texto da ordem de compra.
-
-Capacidades atuais:
-
-- extrai cabecalho, itens e totais
-- reconstrui descricoes quebradas em varias linhas
-- suporta mais de uma OC dentro do mesmo PDF
+- interpreta cabecalho, itens e totais
+- recompõe descricoes quebradas em varias linhas
+- suporta mais de uma OC no mesmo PDF
 
 ### `src/tratar_duplicatas.py`
 
-Responsavel por limpar a tabela de produtos.
-
-Regras atuais:
-
-- normaliza os textos
-- cria `item_normalizado`
+- limpa a tabela de produtos
+- normaliza textos
 - remove duplicatas exatas
 - separa casos para revisao
-- gera arquivos de apoio em `data/saida/relatorios`
 
 ### `src/produtos_depara.py`
 
-Responsavel por:
-
-- carregar a tabela tratada
-- validar colunas obrigatorias
-- buscar produtos por correspondencia exata ou aproximada
-- aplicar regras de conversao de embalagem, unidade e valor
+- carrega a tabela tratada
+- busca produtos por correspondencia exata ou aproximada
+- aplica regras de conversao de quantidade, embalagem e valor
 
 ### `src/relatorio_processamento.py`
 
-Responsavel por gerar um DataFrame com o resultado da conversao item a item, incluindo:
-
-- item encontrado
-- codigo silo
-- descricao ERP
-- quantidade original
-- quantidade convertida
-- valor unitario convertido
-- valor total convertido
-- score
-- status
+- gera o relatorio item a item da conversao
+- registra score, status, quantidade e valor convertidos
 
 ### `src/validar_txt.py`
 
-Responsavel por validar:
-
-- produtos convertidos
-- consistencia dos totais
-- estrutura do TXT gerado
+- valida produtos convertidos
+- valida totais
+- valida estrutura do TXT
 
 ### `src/gerar_txt_neogrid.py`
 
-Responsavel por gerar o TXT NeoGrid com registros:
-
-- `019`
-- `024`
-- `040`
-- `090`
+- monta os registros `019`, `024`, `040` e `090`
+- gera o TXT no layout NeoGrid
 
 ### `src/main.py`
 
-Responsavel pela orquestracao do fluxo completo.
+- orquestra o fluxo completo de processamento
+- suporta um PDF ou uma pasta com varios PDFs
+
+### `src/auto_processar_pasta.py`
+
+- runner do servidor Windows
+- processa automaticamente a pasta de entrada
+- move arquivos entre `entrada`, `processando`, `processados` e `erro`
+- registra logs da execucao
 
 ## Regra De De/Para De Produtos
 
-A descricao do item no PDF e cruzada com a coluna `Item` da tabela de produtos. A partir disso, o sistema retorna:
+O item do PDF e cruzado com a coluna `Item` da tabela de produtos. A partir disso, o sistema retorna:
 
 - `COD. SILO`
-- `DESCRIÇÃO`
+- `DESCRICAO`
 - regra de conversao, quando existir
 
 O processo usa:
@@ -240,10 +227,12 @@ O processo usa:
 
 ## Status Possiveis Do Produto
 
-- `encontrado_exato`
-- `encontrado_aproximado`
-- `revisar`
-- `nao_encontrado`
+| Status | Significado |
+| --- | --- |
+| `encontrado_exato` | correspondencia direta encontrada |
+| `encontrado_aproximado` | correspondencia aproximada aceitavel |
+| `revisar` | ha indicio de correspondencia, mas exige conferencia humana |
+| `nao_encontrado` | item nao foi localizado de forma segura |
 
 Regra de liberacao:
 
@@ -264,22 +253,22 @@ Arquivos gerados:
 
 ## Regras De Conversao Ja Implementadas
 
-O projeto ja possui conversoes comerciais importantes, incluindo:
+O projeto ja cobre regras comerciais importantes, incluindo:
 
 - divisao por embalagem com arredondamento sempre para cima
 - arredondamento para multiplos fixos
 - conversao de filme PVC de `500m` para `1000m`
-- regra especial da Farinha de Rosca vendida em pacotes de `5KG`
+- regra especial da Farinha de Rosca em pacotes de `5KG`
 - conversoes de docinhos por caixa de `50`, `150` e `160`
 - excecoes em que a quantidade no sistema precisa ser lancada por multiplo de pacote fechado
 
-### Exemplos de regras suportadas
+Exemplos:
 
 - `130` unidades com regra `50` vira `3` caixas
 - `151` unidades com regra `150` vira `2` caixas
 - `130` unidades com regra `160` vira `1` caixa
 - `90` guardanapos com multiplo `72` vira `144`
-- `13` Fibraço Verde Grosso com multiplo `10` vira `20`
+- `13` Fibraco Verde Grosso com multiplo `10` vira `20`
 - `12 KG` de Farinha de Rosca vira `3` pacotes de `5KG`
 
 ## Regra De Valor Nas Conversoes
@@ -308,52 +297,19 @@ Antes de gerar o TXT, o sistema valida:
 - se o total dos itens bate com o total da OC
 - se o TXT gerado possui estrutura minima esperada
 
-## Testes
+## Automacao No Servidor
 
-Para rodar a suite de testes:
+O projeto ja esta preparado para operar no servidor Windows da empresa com pasta UNC.
 
-```powershell
-python -m pytest -q
-```
+Premissas atuais:
 
-Cobertura atual por modulo:
+- servidor Windows
+- pasta raiz de rede `\\Servidor\arquivos rede\AUTOMAÇÃO OC`
+- tabela de produtos no servidor
+- PDFs processados mantidos em historico
+- erros tratados por pasta, relatorio e log
 
-- extracao de PDF
-- parser de OC
-- tratamento de duplicatas
-- De/Para de produtos
-- relatorio de conversao
-- validacao do TXT
-- geracao do TXT
-- fluxo principal
-
-## Estado Atual Do Projeto
-
-O projeto ja esta funcional ponta a ponta para os exemplos atualmente trabalhados.
-
-Ja foram validados:
-
-- processamento de OCs reais em PDF
-- aplicacao das principais regras de conversao
-- geracao dos TXTs NeoGrid
-- geracao dos relatorios Excel
-- processamento de uma pasta com varias OCs
-
-## Proxima Etapa: Automacao No Servidor
-
-O proximo objetivo e tirar a execucao da maquina local e colocar o processo para rodar automaticamente no servidor Windows da empresa.
-
-Decisoes ja definidas:
-
-- o servidor roda Windows
-- a automacao usara a pasta de rede:
-  - `\\Servidor\arquivos rede\AUTOMAÇÃO OC`
-- a tabela de produtos ficara no servidor
-- os PDFs processados devem ser mantidos
-- os PDFs processados devem ser renomeados com o numero da OC
-- neste primeiro momento, erros serao tratados por pasta e relatorio
-
-Estrutura prevista no servidor:
+### Estrutura prevista no servidor
 
 - `entrada`
 - `processando`
@@ -364,23 +320,71 @@ Estrutura prevista no servidor:
 - `apoio`
 - `logs`
 
-## Documentacao Da Etapa Do Servidor
+### Protecoes operacionais ja implementadas
 
-Arquivos ja criados para apoiar essa implantacao:
+- trava de concorrencia com `.automacao_oc.lock`
+- validacao de arquivo ainda em copia antes do processamento
+- parametros configuraveis para intervalo e quantidade de leituras estaveis
+- remocao de TXT parcial em caso de falha
+- diferenciacao entre erro tecnico e erro de negocio
+- arquivamento do PDF com nome `OC_<numero_oc>.pdf`
 
+Variaveis de ambiente suportadas:
+
+- `AUTOMACAO_OC_ROOT`
+- `AUTOMACAO_OC_READY_CHECK_INTERVAL_SECONDS`
+- `AUTOMACAO_OC_READY_STABLE_CHECKS`
+
+## Testes
+
+Para rodar a suite:
+
+```powershell
+python -m pytest -q
+```
+
+Cobertura atual:
+
+- extracao de PDF
+- parser de OC
+- tratamento de duplicatas
+- De/Para de produtos
+- relatorio de conversao
+- validacao do TXT
+- geracao do TXT
+- fluxo principal
+- configuracao do servidor
+- runner automatico da pasta
+
+## Documentacao
+
+Documentos principais desta etapa:
+
+- [guia_implantacao_operacao_servidor.md](docs/guia_implantacao_operacao_servidor.md)
 - [desenho_tecnico_automacao_servidor.md](docs/desenho_tecnico_automacao_servidor.md)
+- [agendamento_windows_automacao_oc.md](docs/agendamento_windows_automacao_oc.md)
+- [checklist_homologacao_automacao_oc.md](docs/checklist_homologacao_automacao_oc.md)
 - [prompts_etapa_automacao_servidor.md](docs/prompts_etapa_automacao_servidor.md)
 - [resumo_andamento_projeto.md](docs/resumo_andamento_projeto.md)
 
-## Publicacao E Versionamento
+## Estado Atual
 
-Para revisar o status local:
+O projeto esta em um ponto maduro para:
+
+- continuar refinando regras de conversao
+- validar novos exemplos de OCs reais
+- homologar a operacao no servidor
+- colocar o agendamento automatico em producao
+
+## Versionamento
+
+Para revisar o estado local:
 
 ```powershell
 git status
 ```
 
-Para rodar os testes antes de subir alteracoes:
+Para validar os testes antes de subir alteracoes:
 
 ```powershell
 python -m pytest -q
@@ -388,8 +392,7 @@ python -m pytest -q
 
 ## Observacoes Importantes
 
-- a qualidade da tabela de produtos influencia diretamente a qualidade do De/Para
-- novas regras comerciais podem exigir novos tratamentos em `src/produtos_depara.py`
+- a qualidade da tabela de produtos influencia diretamente o sucesso do De/Para
+- novas regras comerciais podem exigir ajustes em `src/produtos_depara.py`
 - o layout NeoGrid ainda pode receber refinamentos conforme homologacao com o ERP
-- a etapa de servidor sera implementada sobre o pipeline atual, nao em paralelo separado
-
+- a etapa de servidor aproveita o pipeline atual, sem duplicar logica
