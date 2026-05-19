@@ -1,20 +1,21 @@
 # silo-automacao
 
-Conversao automatizada de ordens de compra em PDF para arquivos TXT no padrao NeoGrid, com foco em importacao no ERP e operacao futura em servidor Windows.
+Automacao de ordens de compra em PDF para arquivos TXT no padrao NeoGrid, com integracao ao ERP e operacao automatica no servidor Windows.
 
-## Resumo
+## Visao Geral
 
-O projeto faz o fluxo completo abaixo:
+O projeto executa o fluxo completo abaixo:
 
-1. le a ordem de compra em PDF
+1. le o PDF da ordem de compra
 2. extrai e interpreta cabecalho, itens e totais
 3. cruza os itens com a tabela de produtos do ERP
 4. aplica regras de conversao comercial
 5. valida o resultado
 6. gera o TXT NeoGrid
-7. gera relatorios Excel para apoio e auditoria
+7. gera relatorios de apoio
+8. processa automaticamente os arquivos no servidor
 
-Hoje o projeto ja funciona ponta a ponta para os exemplos reais trabalhados e tambem ja esta preparado para a etapa de automacao em servidor.
+Hoje o projeto ja esta funcionando no servidor com agendamento automatico.
 
 ## O Que O Projeto Entrega
 
@@ -26,9 +27,9 @@ Hoje o projeto ja funciona ponta a ponta para os exemplos reais trabalhados e ta
 | Conversoes | Ajuste de quantidade, embalagem e valor |
 | Validacao | Bloqueio por revisao, nao encontrado e divergencia de total |
 | Saida | Geracao do TXT NeoGrid e relatorio de conversao |
-| Operacao | Processamento de um arquivo, de uma pasta e runner para servidor |
+| Operacao | Processamento manual, em lote e automatico no servidor |
 
-## Arquitetura Rapida
+## Fluxo Rapido
 
 ```text
 PDF da OC
@@ -49,6 +50,7 @@ silo-automacao/
 |- README.md
 |- requirements.txt
 |- .gitignore
+|- rodar_automacao_oc.bat
 |- data/
 |  |- entrada/
 |  |  \- ordens_pdf/
@@ -97,7 +99,7 @@ silo-automacao/
 
 ## Arquivos Necessarios
 
-Para o fluxo local e para a operacao no servidor, estes arquivos sao essenciais:
+Arquivos essenciais para o funcionamento:
 
 - PDFs das ordens de compra
 - `Tabela de produtos.xlsx`
@@ -111,7 +113,7 @@ Localizacao padrao no projeto:
 - layout NeoGrid: `data/apoio/NeoGrid PEDIDOS.pdf`
 - exemplo de TXT: `data/exemplos/txt_exemplo_neogrid.txt`
 
-## Instalacao
+## Instalacao Local
 
 ```powershell
 python -m venv .venv
@@ -143,7 +145,7 @@ python -m src.main "data/entrada/ordens_pdf/ordem_compra.pdf"
 python -m src.main "data/entrada/ordens_pdf"
 ```
 
-### Rodar o runner automatico do servidor
+### Rodar o runner automatico manualmente
 
 ```powershell
 python -m src.auto_processar_pasta
@@ -253,7 +255,7 @@ Arquivos gerados:
 
 ## Regras De Conversao Ja Implementadas
 
-O projeto ja cobre regras comerciais importantes, incluindo:
+O projeto cobre regras comerciais importantes, incluindo:
 
 - divisao por embalagem com arredondamento sempre para cima
 - arredondamento para multiplos fixos
@@ -299,17 +301,26 @@ Antes de gerar o TXT, o sistema valida:
 
 ## Automacao No Servidor
 
-O projeto ja esta preparado para operar no servidor Windows da empresa com pasta UNC.
+O projeto ja esta implantado para operacao automatica no servidor Windows.
 
-Premissas atuais:
+### Caminhos do servidor
 
-- servidor Windows
-- pasta raiz de rede `\\Servidor\arquivos rede\AUTOMAÇÃO OC`
-- tabela de produtos no servidor
-- PDFs processados mantidos em historico
-- erros tratados por pasta, relatorio e log
+Existem dois cenarios possiveis:
 
-### Estrutura prevista no servidor
+- caminho UNC quando acessado remotamente:
+  - `\\Servidor\arquivos rede\AUTOMACAO OC`
+- caminho local na propria maquina do servidor:
+  - `C:\ARQUIVOS REDE\AUTOMACAO OC`
+
+Na operacao atual do servidor, o caminho utilizado e:
+
+- `C:\ARQUIVOS REDE\AUTOMACAO OC`
+
+Essa definicao e controlada pela variavel:
+
+- `AUTOMACAO_OC_ROOT`
+
+### Estrutura operacional no servidor
 
 - `entrada`
 - `processando`
@@ -320,7 +331,7 @@ Premissas atuais:
 - `apoio`
 - `logs`
 
-### Protecoes operacionais ja implementadas
+### Protecoes operacionais implementadas
 
 - trava de concorrencia com `.automacao_oc.lock`
 - validacao de arquivo ainda em copia antes do processamento
@@ -334,6 +345,31 @@ Variaveis de ambiente suportadas:
 - `AUTOMACAO_OC_ROOT`
 - `AUTOMACAO_OC_READY_CHECK_INTERVAL_SECONDS`
 - `AUTOMACAO_OC_READY_STABLE_CHECKS`
+
+## Execucao Pelo Agendador De Tarefas
+
+A operacao automatica atual do servidor usa o arquivo [rodar_automacao_oc.bat](rodar_automacao_oc.bat).
+
+Responsabilidades desse arquivo:
+
+- define o caminho operacional do servidor
+- configura os parametros de checagem de arquivo em copia
+- posiciona o projeto no diretorio correto
+- ajusta o `PYTHONPATH`
+- chama o runner automatico
+- grava um log complementar do agendador em:
+  - `C:\ARQUIVOS REDE\AUTOMACAO OC\logs\agendador_execucao.log`
+
+Trecho central da chamada:
+
+```bat
+set "AUTOMACAO_OC_ROOT=C:\ARQUIVOS REDE\AUTOMACAO OC"
+set "AUTOMACAO_OC_READY_CHECK_INTERVAL_SECONDS=1.5"
+set "AUTOMACAO_OC_READY_STABLE_CHECKS=2"
+cd /d C:\Projetos\silo-automacao
+set "PYTHONPATH=C:\Projetos\silo-automacao\src"
+call C:\Projetos\silo-automacao\.venv\Scripts\python.exe -m auto_processar_pasta
+```
 
 ## Testes
 
@@ -373,8 +409,8 @@ O projeto esta em um ponto maduro para:
 
 - continuar refinando regras de conversao
 - validar novos exemplos de OCs reais
-- homologar a operacao no servidor
-- colocar o agendamento automatico em producao
+- acompanhar a operacao automatica no servidor
+- evoluir reprocessamento e monitoramento, se necessario
 
 ## Versionamento
 
@@ -395,4 +431,4 @@ python -m pytest -q
 - a qualidade da tabela de produtos influencia diretamente o sucesso do De/Para
 - novas regras comerciais podem exigir ajustes em `src/produtos_depara.py`
 - o layout NeoGrid ainda pode receber refinamentos conforme homologacao com o ERP
-- a etapa de servidor aproveita o pipeline atual, sem duplicar logica
+- a operacao do servidor reutiliza o mesmo pipeline validado localmente
