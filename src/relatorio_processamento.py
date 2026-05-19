@@ -10,7 +10,13 @@ from typing import Any
 import pandas as pd
 
 from parser_oc import PurchaseOrder
-from produtos_depara import buscar_produto
+from produtos_depara import (
+    CONVERSION_COLUMN,
+    NORMALIZED_ITEM_COLUMN,
+    aplicar_regra_conversao,
+    buscar_produto,
+    normalizar_texto_match,
+)
 
 REPORT_COLUMNS = [
     "numero_oc",
@@ -19,10 +25,13 @@ REPORT_COLUMNS = [
     "item_encontrado_tabela",
     "codigo_silo",
     "descricao_erp",
+    "quantidade_original",
     "quantidade",
     "unidade",
     "valor_unitario",
     "valor_total",
+    "regra_conversao",
+    "criterio_conversao",
     "score",
     "status",
 ]
@@ -43,6 +52,16 @@ def gerar_relatorio_conversao(
     rows: list[dict[str, Any]] = []
     for item in itens:
         resultado_busca = buscar_produto(str(item.get("item_pdf", "")), df_depara)
+        regra_conversao = _obter_regra_conversao(resultado_busca, df_depara)
+        resultado_conversao = aplicar_regra_conversao(
+            quantidade=float(item.get("qtde", 0) or 0),
+            unidade=str(item.get("unidade", "") or ""),
+            regra_conversao=regra_conversao,
+            item_pdf=str(item.get("item_pdf", "") or ""),
+            descricao_erp=str(resultado_busca.get("descricao_erp", "") or ""),
+            valor_unitario=float(item.get("valor_unitario", 0) or 0),
+            valor_total=float(item.get("valor_total", 0) or 0),
+        )
         rows.append(
             {
                 "numero_oc": item.get("numero_oc") or numero_oc,
@@ -51,10 +70,13 @@ def gerar_relatorio_conversao(
                 "item_encontrado_tabela": resultado_busca["item_encontrado_tabela"],
                 "codigo_silo": resultado_busca["codigo_silo"],
                 "descricao_erp": resultado_busca["descricao_erp"],
-                "quantidade": item.get("qtde", 0),
-                "unidade": item.get("unidade", ""),
-                "valor_unitario": item.get("valor_unitario", 0),
-                "valor_total": item.get("valor_total", 0),
+                "quantidade_original": item.get("qtde", 0),
+                "quantidade": resultado_conversao["quantidade_convertida"],
+                "unidade": resultado_conversao["unidade_convertida"],
+                "valor_unitario": resultado_conversao["valor_unitario_convertido"],
+                "valor_total": resultado_conversao["valor_total_convertido"],
+                "regra_conversao": resultado_conversao["regra_conversao_aplicada"],
+                "criterio_conversao": resultado_conversao["criterio_conversao"],
                 "score": resultado_busca["score"],
                 "status": resultado_busca["status"],
             }
@@ -65,6 +87,29 @@ def gerar_relatorio_conversao(
     dataframe.attrs["pode_gerar_txt"] = pode_gerar_txt(dataframe)
     dataframe.attrs["status_geracao_txt"] = status_geracao_txt(dataframe)
     return dataframe
+
+
+def _obter_regra_conversao(
+    resultado_busca: dict[str, Any],
+    df_depara: pd.DataFrame,
+) -> str:
+    """Busca a regra de conversao na linha do produto encontrado."""
+
+    if CONVERSION_COLUMN not in df_depara.columns:
+        return ""
+
+    item_tabela = str(resultado_busca.get("item_encontrado_tabela", "") or "")
+    if not item_tabela:
+        return ""
+
+    item_normalizado = normalizar_texto_match(item_tabela)
+    match = df_depara.loc[
+        df_depara[NORMALIZED_ITEM_COLUMN].map(normalizar_texto_match) == item_normalizado
+    ]
+    if match.empty:
+        return ""
+
+    return str(match.iloc[0].get(CONVERSION_COLUMN, "") or "")
 
 
 def salvar_relatorio_conversao(

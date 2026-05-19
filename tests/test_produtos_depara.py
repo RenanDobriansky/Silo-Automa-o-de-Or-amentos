@@ -1,4 +1,4 @@
-"""Testes do carregamento e busca de produtos no de-para tratado."""
+"""Testes do carregamento, busca e conversao de produtos no de-para tratado."""
 
 from __future__ import annotations
 
@@ -11,10 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from produtos_depara import (
     CODE_COLUMN,
+    CONVERSION_COLUMN,
     DESCRIPTION_COLUMN,
     ITEM_COLUMN,
     MATCH_REVIEW_COLUMN,
     NORMALIZED_ITEM_COLUMN,
+    aplicar_regra_conversao,
     buscar_produto,
     carregar_depara_produtos,
     normalizar_texto,
@@ -180,3 +182,152 @@ def test_normalizar_texto_remove_quebras_e_espacos() -> None:
 
 def test_normalizar_texto_match_remove_acento_e_pontuacao() -> None:
     assert normalizar_texto_match("  Soja em Grão!  ") == "soja em grao"
+
+
+def test_aplicar_regra_conversao_numerica_divide_e_arredonda() -> None:
+    resultado = aplicar_regra_conversao(
+        quantidade=2249,
+        unidade="UN",
+        regra_conversao="50",
+        item_pdf="Docinho Maria Mole",
+        descricao_erp="DOCINHO MARIA MOLE CX C/50",
+        valor_unitario=0.74,
+        valor_total=1664.26,
+    )
+
+    assert resultado["quantidade_convertida"] == 45.0
+    assert resultado["valor_unitario_convertido"] == 37.0
+    assert resultado["valor_total_convertido"] == 1665.0
+    assert resultado["criterio_conversao"] == "divisao_por_embalagem"
+
+
+def test_aplicar_regra_conversao_numerica_arredonda_sempre_para_cima() -> None:
+    resultado = aplicar_regra_conversao(
+        quantidade=130,
+        unidade="UN",
+        regra_conversao="50",
+        item_pdf="Docinho Maria Mole",
+        descricao_erp="DOCINHO MARIA MOLE CX C/50",
+        valor_unitario=0.74,
+        valor_total=96.2,
+    )
+
+    assert resultado["quantidade_convertida"] == 3.0
+    assert resultado["valor_unitario_convertido"] == 37.0
+    assert resultado["valor_total_convertido"] == 111.0
+    assert resultado["criterio_conversao"] == "divisao_por_embalagem"
+
+
+def test_aplicar_regra_conversao_multiplo_de_72() -> None:
+    resultado = aplicar_regra_conversao(
+        quantidade=90,
+        unidade="UN",
+        regra_conversao="ARREDONDAR MULTIPLO DE 72",
+        item_pdf="Guardanapo 20x20 a 24x24 com 100un",
+        descricao_erp="GUARDANAPO C/100 UN (FD 72)",
+    )
+
+    assert resultado["quantidade_convertida"] == 144.0
+    assert resultado["criterio_conversao"] == "arredondamento_para_multiplo"
+
+
+def test_aplicar_regra_conversao_fibraco_verde_grosso_para_multiplo_de_10() -> None:
+    resultado = aplicar_regra_conversao(
+        quantidade=13,
+        unidade="UN",
+        regra_conversao="10",
+        item_pdf="Fibraço Verde Grosso",
+        descricao_erp="FIBRA LIMPEZA PESADA VERDE REF 9506 86,7MMX102MM (FARDO C/10)- BETTANIN",
+        valor_unitario=2.5,
+        valor_total=32.5,
+    )
+
+    assert resultado["quantidade_convertida"] == 20.0
+    assert resultado["valor_unitario_convertido"] == 2.5
+    assert resultado["valor_total_convertido"] == 50.0
+    assert resultado["criterio_conversao"] == "arredondamento_para_multiplo"
+
+
+def test_aplicar_regra_conversao_filme_500_para_1000() -> None:
+    resultado = aplicar_regra_conversao(
+        quantidade=3,
+        unidade="UN",
+        regra_conversao="CONVERTER A CADA DUAS DE 500, MANDAMOS UMA DE 1.000",
+        item_pdf="Filme PVC Largura 40cm rolo 500mt",
+        descricao_erp="FILME PVC ESTICAVEL 38X1000M",
+        valor_unitario=25.0,
+        valor_total=75.0,
+    )
+
+    assert resultado["quantidade_convertida"] == 2.0
+    assert resultado["valor_unitario_convertido"] == 50.0
+    assert resultado["valor_total_convertido"] == 100.0
+    assert resultado["criterio_conversao"] == "duas_unidades_de_500_para_uma_de_1000"
+
+
+def test_aplicar_regra_conversao_moranguete_160_unidades_por_caixa() -> None:
+    resultado = aplicar_regra_conversao(
+        quantidade=130,
+        unidade="UN",
+        regra_conversao="160",
+        item_pdf="Docinho Chocolate Moranguete",
+        descricao_erp="DOCINHO CHOCOLATE MORANGUETE 13 GR CX C/160 - BEL CHOCOLATES",
+        valor_unitario=0.25,
+        valor_total=32.5,
+    )
+
+    assert resultado["quantidade_convertida"] == 1.0
+    assert resultado["valor_unitario_convertido"] == 40.0
+    assert resultado["valor_total_convertido"] == 40.0
+    assert resultado["criterio_conversao"] == "divisao_por_embalagem"
+
+
+def test_aplicar_regra_conversao_docinho_embalado_150_unidades_por_caixa() -> None:
+    resultado = aplicar_regra_conversao(
+        quantidade=151,
+        unidade="UN",
+        regra_conversao="150",
+        item_pdf="Docinho Goiabada Embalado",
+        descricao_erp="DOCINHO DE GOIABADA EMBALADO CX C/150 3,0 KG - COSSARI",
+        valor_unitario=0.37,
+        valor_total=55.87,
+    )
+
+    assert resultado["quantidade_convertida"] == 2.0
+    assert resultado["valor_unitario_convertido"] == 55.5
+    assert resultado["valor_total_convertido"] == 111.0
+    assert resultado["criterio_conversao"] == "divisao_por_embalagem"
+
+
+def test_aplicar_regra_conversao_farinha_rosca_em_kg() -> None:
+    resultado = aplicar_regra_conversao(
+        quantidade=12,
+        unidade="KG",
+        regra_conversao="NA COTAÇÃO TEM UNIDADE DE MEDIDA KILO, CONVERTE POR 5 E DIRETO 5 KILOS",
+        item_pdf="Farinha de Rosca",
+        descricao_erp="FARINHA DE ROSCA 5KG - CHARLOTTE",
+        valor_unitario=8.0,
+        valor_total=96.0,
+    )
+
+    assert resultado["quantidade_convertida"] == 3.0
+    assert resultado["valor_unitario_convertido"] == 40.0
+    assert resultado["valor_total_convertido"] == 120.0
+    assert resultado["criterio_conversao"] == "farinha_rosca_kg_para_pacote_5kg"
+
+
+def test_aplicar_regra_conversao_farinha_rosca_pacote_5kg_direto() -> None:
+    resultado = aplicar_regra_conversao(
+        quantidade=2,
+        unidade="PCT",
+        regra_conversao="NA COTAÇÃO TEM UNIDADE DE MEDIDA KILO, CONVERTE POR 5 E DIRETO 5 KILOS",
+        item_pdf="Farinha de Rosca Pacote 5kg",
+        descricao_erp="FARINHA DE ROSCA 5KG - CHARLOTTE",
+        valor_unitario=40.0,
+        valor_total=80.0,
+    )
+
+    assert resultado["quantidade_convertida"] == 2.0
+    assert resultado["valor_unitario_convertido"] == 40.0
+    assert resultado["valor_total_convertido"] == 80.0
+    assert resultado["criterio_conversao"] == "farinha_rosca_pacote_5kg_direto"

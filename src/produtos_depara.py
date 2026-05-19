@@ -6,6 +6,7 @@ import re
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import replace
+from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from parser_oc import PurchaseOrder, PurchaseOrderItem, replace_items
 ITEM_COLUMN = "Item"
 CODE_COLUMN = "COD. SILO"
 DESCRIPTION_COLUMN = "DESCRI\u00c7\u00c3O"
+CONVERSION_COLUMN = "CONVERS\u00c3O"
 NORMALIZED_ITEM_COLUMN = "item_normalizado"
 MATCH_SCORE_COLUMN = "score_correspondencia"
 MATCH_REVIEW_COLUMN = "requer_revisao"
@@ -40,6 +42,8 @@ def carregar_depara_produtos(caminho_excel: str) -> pd.DataFrame:
     dataframe[ITEM_COLUMN] = dataframe[ITEM_COLUMN].map(normalizar_texto)
     dataframe[CODE_COLUMN] = dataframe[CODE_COLUMN].map(normalizar_texto)
     dataframe[DESCRIPTION_COLUMN] = dataframe[DESCRIPTION_COLUMN].map(normalizar_texto)
+    if CONVERSION_COLUMN in dataframe.columns:
+        dataframe[CONVERSION_COLUMN] = dataframe[CONVERSION_COLUMN].map(normalizar_texto)
     dataframe[NORMALIZED_ITEM_COLUMN] = dataframe[NORMALIZED_ITEM_COLUMN].map(normalizar_texto_match)
     dataframe = dataframe.drop_duplicates().reset_index(drop=True)
 
@@ -140,6 +144,155 @@ def buscar_produto(item_pdf: str, df_depara: pd.DataFrame) -> dict[str, Any]:
     )
 
 
+def aplicar_regra_conversao(
+    quantidade: float | int,
+    unidade: str,
+    regra_conversao: Any,
+    item_pdf: str = "",
+    descricao_erp: str = "",
+    valor_unitario: float | int = 0,
+    valor_total: float | int = 0,
+) -> dict[str, Any]:
+    """Aplica a regra de conversao de unidade/embalagem da tabela de produtos."""
+
+    regra = normalizar_texto(regra_conversao)
+    if not regra:
+        return _build_conversion_result(
+            quantidade,
+            unidade,
+            "",
+            1,
+            "sem_conversao",
+            valor_unitario,
+            valor_total,
+        )
+
+    regra_match = normalizar_texto_match(regra)
+    item_match = normalizar_texto_match(item_pdf)
+    descricao_match = normalizar_texto_match(descricao_erp)
+    unidade_match = normalizar_texto_match(unidade)
+
+    if _is_farinha_rosca_5kg_rule(regra_match):
+        if _is_unit_in_kilograms(unidade_match):
+            quantidade_convertida = _divide_and_round_up(quantidade, 5)
+            valor_unitario_convertido = float(Decimal(str(valor_unitario or 0)) * Decimal("5"))
+            valor_total_convertido = quantidade_convertida * valor_unitario_convertido
+            return _build_conversion_result(
+                quantidade_convertida,
+                unidade,
+                regra,
+                5,
+                "farinha_rosca_kg_para_pacote_5kg",
+                valor_unitario_convertido,
+                valor_total_convertido,
+            )
+
+        if "5kg" in item_match or "5 kg" in item_match or not _is_unit_in_kilograms(unidade_match):
+            return _build_conversion_result(
+                quantidade,
+                unidade,
+                regra,
+                1,
+                "farinha_rosca_pacote_5kg_direto",
+                valor_unitario,
+                valor_total,
+            )
+
+    if _is_round_up_multiple_item(item_match, descricao_match):
+        numeric_match = re.fullmatch(r"\d+(?:[.,]\d+)?", regra)
+        if numeric_match:
+            fator = float(regra.replace(",", "."))
+            quantidade_convertida = _round_up_to_multiple(quantidade, fator)
+            return _build_conversion_result(
+                quantidade_convertida,
+                unidade,
+                regra,
+                fator,
+                "arredondamento_para_multiplo",
+                valor_unitario,
+                float(Decimal(str(quantidade_convertida)) * Decimal(str(valor_unitario or 0))),
+            )
+
+    numeric_match = re.fullmatch(r"\d+(?:[.,]\d+)?", regra)
+    if numeric_match:
+        fator = float(regra.replace(",", "."))
+        return _build_division_conversion_result(
+            quantidade=quantidade,
+            unidade=unidade,
+            regra=regra,
+            fator=fator,
+            criterio="divisao_por_embalagem",
+            valor_unitario=valor_unitario,
+        )
+
+    if "a cada duas de 500" in regra_match:
+        if "1000" in item_match:
+            return _build_conversion_result(
+                quantidade,
+                unidade,
+                regra,
+                1,
+                "mantido_produto_1000",
+                valor_unitario,
+                valor_total,
+            )
+        return _build_division_conversion_result(
+            quantidade=quantidade,
+            unidade=unidade,
+            regra=regra,
+            fator=2,
+            criterio="duas_unidades_de_500_para_uma_de_1000",
+            valor_unitario=valor_unitario,
+        )
+
+    round_multiple_match = re.search(r"multiplo de\s*(\d+(?:[.,]\d+)?)", regra_match)
+    if round_multiple_match:
+        fator = float(round_multiple_match.group(1).replace(",", "."))
+        quantidade_convertida = _round_up_to_multiple(quantidade, fator)
+        return _build_conversion_result(
+            quantidade_convertida,
+            unidade,
+            regra,
+            fator,
+            "arredondamento_para_multiplo",
+            valor_unitario,
+            float(Decimal(str(quantidade_convertida)) * Decimal(str(valor_unitario or 0))),
+        )
+
+    factor_match = re.search(r"(?:dividir por|converter por)\s*(\d+(?:[.,]\d+)?)", regra_match)
+    if factor_match:
+        fator = float(factor_match.group(1).replace(",", "."))
+        return _build_division_conversion_result(
+            quantidade=quantidade,
+            unidade=unidade,
+            regra=regra,
+            fator=fator,
+            criterio="divisao_por_regra_textual",
+            valor_unitario=valor_unitario,
+        )
+
+    if "500 gramas" in regra_match and "1 kilo" in regra_match and "1kg" in descricao_match:
+        return _build_conversion_result(
+            quantidade,
+            unidade,
+            regra,
+            1,
+            "mantido_produto_1kg",
+            valor_unitario,
+            valor_total,
+        )
+
+    return _build_conversion_result(
+        quantidade,
+        unidade,
+        regra,
+        1,
+        "regra_nao_mapeada",
+        valor_unitario,
+        valor_total,
+    )
+
+
 def load_product_mapping(xlsx_path: str | Path) -> dict[str, dict[str, str]]:
     """Wrapper de compatibilidade que monta um dicionario a partir do Excel tratado."""
 
@@ -234,4 +387,99 @@ def _build_result(
         "descricao_erp": descricao_erp,
         "score": score,
         "status": status,
+    }
+
+
+def _divide_and_round_up(quantidade: float | int, fator: float) -> float:
+    """Divide uma quantidade por fator e arredonda para cima."""
+
+    quantidade_decimal = Decimal(str(quantidade or 0))
+    fator_decimal = Decimal(str(fator or 1))
+    if fator_decimal == 0:
+        return float(quantidade_decimal)
+    convertido = (quantidade_decimal / fator_decimal).quantize(Decimal("1"), rounding=ROUND_CEILING)
+    return float(convertido)
+
+
+def _is_farinha_rosca_5kg_rule(regra_match: str) -> bool:
+    """Identifica a regra especial da farinha de rosca vendida em pacotes de 5kg."""
+
+    return (
+        "unidade de medida kilo" in regra_match
+        and "converte por 5" in regra_match
+        and "direto 5 kilos" in regra_match
+    )
+
+
+def _is_unit_in_kilograms(unidade_match: str) -> bool:
+    """Indica se a unidade recebida representa quilograma."""
+
+    return unidade_match in {"kg", "kilo", "quilo", "quilograma", "quilograma"}
+
+
+def _is_round_up_multiple_item(item_match: str, descricao_match: str) -> bool:
+    """Indica itens que devem ser lancados individualmente em multiplos fixos."""
+
+    return (
+        "fibraco verde grosso" in item_match
+        or "fibra limpeza pesada verde" in descricao_match
+    )
+
+
+def _round_up_to_multiple(quantidade: float | int, multiplo: float) -> float:
+    """Arredonda a quantidade para o proximo multiplo inteiro acima."""
+
+    quantidade_decimal = Decimal(str(quantidade or 0))
+    multiplo_decimal = Decimal(str(multiplo or 1))
+    if multiplo_decimal == 0:
+        return float(quantidade_decimal)
+
+    fator = (quantidade_decimal / multiplo_decimal).quantize(Decimal("1"), rounding=ROUND_CEILING)
+    convertido = fator * multiplo_decimal
+    return float(convertido)
+
+
+def _build_division_conversion_result(
+    quantidade: float | int,
+    unidade: str,
+    regra: str,
+    fator: float,
+    criterio: str,
+    valor_unitario: float | int,
+) -> dict[str, Any]:
+    """Converte quantidade por fator e recalcula valor unitario para a nova embalagem."""
+
+    quantidade_convertida = _divide_and_round_up(quantidade, fator)
+    valor_unitario_convertido = float(Decimal(str(valor_unitario or 0)) * Decimal(str(fator or 1)))
+    valor_total_convertido = quantidade_convertida * valor_unitario_convertido
+    return _build_conversion_result(
+        quantidade_convertida,
+        unidade,
+        regra,
+        fator,
+        criterio,
+        valor_unitario_convertido,
+        valor_total_convertido,
+    )
+
+
+def _build_conversion_result(
+    quantidade_convertida: float,
+    unidade_convertida: str,
+    regra_aplicada: str,
+    fator_aplicado: float | int,
+    criterio: str,
+    valor_unitario_convertido: float | int,
+    valor_total_convertido: float | int,
+) -> dict[str, Any]:
+    """Monta o payload padrao do resultado da conversao."""
+
+    return {
+        "quantidade_convertida": quantidade_convertida,
+        "unidade_convertida": unidade_convertida,
+        "regra_conversao_aplicada": regra_aplicada,
+        "fator_conversao": fator_aplicado,
+        "criterio_conversao": criterio,
+        "valor_unitario_convertido": float(valor_unitario_convertido or 0),
+        "valor_total_convertido": float(valor_total_convertido or 0),
     }
