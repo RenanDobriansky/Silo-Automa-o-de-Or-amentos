@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="assets/capa-automacao-ordens-compra.svg" alt="Automação de Ordens de Compra em PDF para TXT NeoGrid" width="100%">
+  <img src="assets/capa-automacao-ordens-compra.png"
+       alt="Automação de Ordens de Compra em PDF para TXT NeoGrid"
+       width="100%">
 </p>
 
 <h1 align="center">Automação de Ordens de Compra</h1>
