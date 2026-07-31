@@ -17,6 +17,7 @@ data/entrada/ordens_pdf/*
 
 data/apoio/*.xlsx
 data/apoio/*.pdf
+data/apoio/_backup/
 
 data/saida/txt_gerados/*
 !data/saida/txt_gerados/
@@ -28,3 +29,5 @@ data/saida/relatorios/*
 !data/exemplos/
 !data/exemplos/*.pdf
 !data/exemplos/*.txt
+
+tmp_syscomp_check/
