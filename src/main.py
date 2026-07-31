@@ -13,10 +13,15 @@ if str(CURRENT_DIR) not in sys.path:
 
 from config import get_config
 from extrair_pdf import extrair_texto_pdf
-from gerar_txt_neogrid import gerar_txt_neogrid
+from gerar_txt_neogrid import NeoGridError, gerar_txt_neogrid
 from parser_oc import parse_ordens_compra
-from produtos_depara import carregar_depara_produtos
+from produtos_depara import CODE_COLUMN, carregar_depara_produtos
 from relatorio_processamento import gerar_relatorio_conversao, salvar_relatorio_conversao
+from syscomp_db import (
+    carregar_produtos_syscomp,
+    enriquecer_relatorio_conversao_com_syscomp,
+    validar_enriquecimento_syscomp,
+)
 from tratar_duplicatas import tratar_duplicatas_produtos
 from validar_txt import validar_processamento
 
@@ -70,7 +75,30 @@ def resolver_pdfs_entrada(caminho_entrada: str | Path) -> list[Path]:
     return pdfs
 
 
-def processar_pdf(caminho_pdf: str | Path, df_depara: Any) -> list[dict[str, Any]]:
+def preparar_catalogo_syscomp(df_depara: Any) -> Any:
+    """Carrega em lote o cadastro oficial do Syscomp para os codigos do de/para."""
+
+    try:
+        codigos_silo = df_depara[CODE_COLUMN].dropna().astype(str).tolist()
+    except Exception as exc:
+        raise RuntimeError(
+            "Nao foi possivel identificar os codigos da tabela de produtos para consultar o Syscomp."
+        ) from exc
+
+    try:
+        return carregar_produtos_syscomp(codigos_silo)
+    except Exception as exc:
+        raise RuntimeError(
+            "Falha ao carregar o cadastro oficial do Syscomp via Firebird ODBC. "
+            "Verifique variaveis FIREBIRD_*, DSN/driver ODBC e acesso ao banco."
+        ) from exc
+
+
+def processar_pdf(
+    caminho_pdf: str | Path,
+    df_depara: Any,
+    df_syscomp_produtos: Any | None = None,
+) -> list[dict[str, Any]]:
     """Executa o fluxo completo de conversao para um PDF de entrada."""
 
     config = get_config()
@@ -88,6 +116,11 @@ def processar_pdf(caminho_pdf: str | Path, df_depara: Any) -> list[dict[str, Any
     for dados_oc in ordens:
         numero_oc = str(dados_oc.get("cabecalho", {}).get("numero_oc", "")).strip()
         relatorio = gerar_relatorio_conversao(dados_oc, df_depara)
+        if df_syscomp_produtos is not None:
+            relatorio = enriquecer_relatorio_conversao_com_syscomp(
+                relatorio,
+                df_syscomp_produtos,
+            )
         caminho_relatorio = salvar_relatorio_conversao(
             relatorio,
             str(config.output_reports_dir),
@@ -95,6 +128,9 @@ def processar_pdf(caminho_pdf: str | Path, df_depara: Any) -> list[dict[str, Any
         )
 
         validacao_previa = validar_processamento(dados_oc, relatorio)
+        validacao_previa["erros"].extend(validar_enriquecimento_syscomp(relatorio))
+        if validacao_previa["erros"]:
+            validacao_previa["status"] = "erro"
         quantidade_itens = len(dados_oc.get("itens", []))
         valor_total = float(dados_oc.get("totais", {}).get("total_fornecedor", 0) or 0)
 
@@ -112,7 +148,22 @@ def processar_pdf(caminho_pdf: str | Path, df_depara: Any) -> list[dict[str, Any
             )
             break
 
-        caminho_txt = gerar_txt_neogrid(dados_oc, relatorio, config.output_txt_dir)
+        try:
+            caminho_txt = gerar_txt_neogrid(dados_oc, relatorio, config.output_txt_dir)
+        except NeoGridError as exc:
+            resultados.append(
+                {
+                    "numero_oc": numero_oc,
+                    "quantidade_itens": quantidade_itens,
+                    "valor_total": valor_total,
+                    "status": "erro",
+                    "caminho_txt": "",
+                    "caminho_relatorio": str(caminho_relatorio),
+                    "erros": [str(exc)],
+                }
+            )
+            break
+
         validacao_final = validar_processamento(dados_oc, relatorio, caminho_txt)
 
         resultados.append(
@@ -148,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pdfs = resolver_pdfs_entrada(args.caminho_entrada)
         df_depara, _ = preparar_tabela_produtos()
+        df_syscomp_produtos = preparar_catalogo_syscomp(df_depara)
     except Exception as exc:
         print(f"Status do processamento: erro")
         print(str(exc))
@@ -156,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 0
     for pdf_path in pdfs:
         try:
-            resultados = processar_pdf(pdf_path, df_depara)
+            resultados = processar_pdf(pdf_path, df_depara, df_syscomp_produtos)
         except Exception as exc:
             print(f"Arquivo processado: {pdf_path}")
             print("Status do processamento: erro")

@@ -6,6 +6,7 @@ import re
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import date
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,11 @@ NORMALIZED_ITEM_COLUMN = "item_normalizado"
 MATCH_SCORE_COLUMN = "score_correspondencia"
 MATCH_REVIEW_COLUMN = "requer_revisao"
 MATCH_REASON_COLUMN = "criterio_escolha"
+ACTIVE_COLUMN = "Ativo"
+ITEM_STATUS_COLUMN = "Status Item"
+PRIORITY_COLUMN = "Prioridade"
+START_DATE_COLUMN = "Data início"
+END_DATE_COLUMN = "Data fim"
 
 REQUIRED_COLUMNS = [
     ITEM_COLUMN,
@@ -44,7 +50,10 @@ def carregar_depara_produtos(caminho_excel: str) -> pd.DataFrame:
     dataframe[DESCRIPTION_COLUMN] = dataframe[DESCRIPTION_COLUMN].map(normalizar_texto)
     if CONVERSION_COLUMN in dataframe.columns:
         dataframe[CONVERSION_COLUMN] = dataframe[CONVERSION_COLUMN].map(normalizar_texto)
+    if ITEM_STATUS_COLUMN in dataframe.columns:
+        dataframe[ITEM_STATUS_COLUMN] = dataframe[ITEM_STATUS_COLUMN].map(normalizar_texto)
     dataframe[NORMALIZED_ITEM_COLUMN] = dataframe[NORMALIZED_ITEM_COLUMN].map(normalizar_texto_match)
+    dataframe = _aplicar_filtro_operacional(dataframe)
     dataframe = dataframe.drop_duplicates().reset_index(drop=True)
 
     conflitos = _identificar_conflitos(dataframe)
@@ -97,6 +106,16 @@ def buscar_produto(item_pdf: str, df_depara: pd.DataFrame) -> dict[str, Any]:
     match_exato = dataframe.loc[dataframe[NORMALIZED_ITEM_COLUMN] == item_normalizado]
     if not match_exato.empty:
         row = match_exato.iloc[0]
+        if _is_not_attended_status(row.get(ITEM_STATUS_COLUMN, "")):
+            return _build_result(
+                item_pdf,
+                row[ITEM_COLUMN],
+                row.get(CODE_COLUMN, ""),
+                row.get(DESCRIPTION_COLUMN, ""),
+                100,
+                "nao_atendido",
+                row.get(ITEM_STATUS_COLUMN, ""),
+            )
         if bool(row.get(MATCH_REVIEW_COLUMN, False)):
             return _build_result(
                 item_pdf,
@@ -105,6 +124,7 @@ def buscar_produto(item_pdf: str, df_depara: pd.DataFrame) -> dict[str, Any]:
                 row[DESCRIPTION_COLUMN],
                 int(float(row.get(MATCH_SCORE_COLUMN, 0) or 0)),
                 "revisar",
+                row.get(ITEM_STATUS_COLUMN, ""),
             )
         return _build_result(
             item_pdf,
@@ -113,6 +133,7 @@ def buscar_produto(item_pdf: str, df_depara: pd.DataFrame) -> dict[str, Any]:
             row[DESCRIPTION_COLUMN],
             100,
             "encontrado_exato",
+            row.get(ITEM_STATUS_COLUMN, ""),
         )
 
     escolhas = dataframe[NORMALIZED_ITEM_COLUMN].dropna().astype(str).tolist()
@@ -126,6 +147,16 @@ def buscar_produto(item_pdf: str, df_depara: pd.DataFrame) -> dict[str, Any]:
 
     item_encontrado, score, _ = resultado
     row = dataframe.loc[dataframe[NORMALIZED_ITEM_COLUMN] == item_encontrado].iloc[0]
+    if _is_not_attended_status(row.get(ITEM_STATUS_COLUMN, "")):
+        return _build_result(
+            item_pdf,
+            row[ITEM_COLUMN],
+            row.get(CODE_COLUMN, ""),
+            row.get(DESCRIPTION_COLUMN, ""),
+            int(score),
+            "nao_atendido",
+            row.get(ITEM_STATUS_COLUMN, ""),
+        )
 
     if score >= 90:
         status = "encontrado_aproximado"
@@ -141,6 +172,7 @@ def buscar_produto(item_pdf: str, df_depara: pd.DataFrame) -> dict[str, Any]:
         row[DESCRIPTION_COLUMN],
         int(score),
         status,
+        row.get(ITEM_STATUS_COLUMN, ""),
     )
 
 
@@ -370,6 +402,102 @@ def _identificar_conflitos(dataframe: pd.DataFrame) -> pd.DataFrame:
     return dataframe.loc[dataframe[NORMALIZED_ITEM_COLUMN].isin(itens_com_conflito)].copy()
 
 
+def _aplicar_filtro_operacional(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Mantem apenas as linhas vigentes e com maior prioridade por item."""
+
+    if not _has_operational_columns(dataframe):
+        return dataframe.copy()
+
+    dataframe = dataframe.copy()
+    dataframe["_ativo_operacional"] = dataframe.apply(_is_row_operational, axis=1)
+    dataframe["_prioridade_operacional"] = dataframe.apply(_parse_priority, axis=1)
+
+    ativos = dataframe.loc[dataframe["_ativo_operacional"]].copy()
+    base = ativos if not ativos.empty else dataframe
+    base = base.sort_values(
+        by=[
+            NORMALIZED_ITEM_COLUMN,
+            "_ativo_operacional",
+            "_prioridade_operacional",
+            MATCH_SCORE_COLUMN if MATCH_SCORE_COLUMN in base.columns else NORMALIZED_ITEM_COLUMN,
+            ITEM_COLUMN,
+        ],
+        ascending=[True, False, False, False, True],
+    )
+    base = base.drop_duplicates(subset=[NORMALIZED_ITEM_COLUMN], keep="first")
+    return base.drop(columns=["_ativo_operacional", "_prioridade_operacional"], errors="ignore")
+
+
+def _has_operational_columns(dataframe: pd.DataFrame) -> bool:
+    """Indica se a planilha traz colunas para controle operacional de vigencia."""
+
+    return any(
+        column in dataframe.columns
+        for column in [ACTIVE_COLUMN, PRIORITY_COLUMN, START_DATE_COLUMN, END_DATE_COLUMN]
+    )
+
+
+def _is_row_operational(row: pd.Series) -> bool:
+    """Indica se a linha esta marcada como ativa e dentro da vigencia."""
+
+    ativo = _parse_active_flag(row.get(ACTIVE_COLUMN, ""))
+    inicio = _parse_date_value(row.get(START_DATE_COLUMN))
+    fim = _parse_date_value(row.get(END_DATE_COLUMN))
+    hoje = date.today()
+
+    if inicio is not None and inicio > hoje:
+        return False
+    if fim is not None and fim < hoje:
+        return False
+    return ativo
+
+
+def _parse_active_flag(value: object) -> bool:
+    """Interpreta a coluna Ativo mantendo compatibilidade com planilhas simples."""
+
+    texto = normalizar_texto_match(value)
+    if not texto:
+        return True
+    if texto in {"sim", "s", "ativo", "true", "1", "ok"}:
+        return True
+    if texto in {"nao", "n", "inativo", "false", "0"}:
+        return False
+    return True
+
+
+def _parse_priority(row: pd.Series) -> int:
+    """Le a prioridade operacional, usando zero como padrao."""
+
+    value = row.get(PRIORITY_COLUMN, "")
+    if pd.isna(value):
+        return 0
+
+    texto = normalizar_texto(value).replace(",", ".")
+    if not texto:
+        return 0
+
+    try:
+        return int(float(texto))
+    except ValueError:
+        return 0
+
+
+def _parse_date_value(value: object) -> date | None:
+    """Converte uma data opcional da planilha para comparacao de vigencia."""
+
+    if pd.isna(value):
+        return None
+
+    texto = normalizar_texto(value)
+    if not texto:
+        return None
+
+    parsed = pd.to_datetime(texto, errors="coerce", dayfirst=True)
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
+
+
 def _build_result(
     item_original_pdf: str,
     item_encontrado_tabela: str,
@@ -377,6 +505,7 @@ def _build_result(
     descricao_erp: str,
     score: int,
     status: str,
+    status_item: str = "",
 ) -> dict[str, Any]:
     """Monta o payload padrao de retorno da busca de produto."""
 
@@ -387,7 +516,15 @@ def _build_result(
         "descricao_erp": descricao_erp,
         "score": score,
         "status": status,
+        "status_item": normalizar_texto(status_item),
     }
+
+
+def _is_not_attended_status(value: Any) -> bool:
+    """Indica se a linha foi marcada como item nao atendido pela empresa."""
+
+    status = normalizar_texto_match(value)
+    return status in {"nao atendido", "nao_atendido"}
 
 
 def _divide_and_round_up(quantidade: float | int, fator: float) -> float:

@@ -109,3 +109,89 @@ def test_tratar_duplicatas_marca_revisao_quando_correspondencia_e_ambigua(
     assert resultado["qtd_duplicatas_para_revisao"] == 1
     assert resultado["qtd_itens_requerendo_revisao"] == 1
     assert bool(produtos_unicos.loc[0, MATCH_REVIEW_COLUMN]) is True
+
+
+def test_tratar_duplicatas_prefere_item_ativo_com_maior_prioridade(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    entrada = tmp_path / "tabela_produtos.xlsx"
+    saida = tmp_path / "relatorios"
+    dataframe = pd.DataFrame(
+        [
+            {
+                "Item": "Doce de Goiaba",
+                "COD. SILO": "100",
+                DESCRIPTION_COLUMN: "DOCE DE GOIABA ANTIGO",
+                "Ativo": "Nao",
+                "Prioridade": 1,
+            },
+            {
+                "Item": "Doce de Goiaba",
+                "COD. SILO": "999",
+                DESCRIPTION_COLUMN: "DOCE DE GOIABA NOVO",
+                "Ativo": "Sim",
+                "Prioridade": 10,
+            },
+        ]
+    )
+    dataframe.to_excel(entrada, index=False)
+
+    monkeypatch.setattr("tratar_duplicatas._get_report_output_dir", lambda: saida)
+
+    resultado = tratar_duplicatas_produtos(str(entrada))
+    produtos_unicos = pd.read_excel(saida / "produtos_unicos.xlsx")
+
+    assert resultado["qtd_produtos_unicos"] == 1
+    assert str(produtos_unicos.loc[0, "COD. SILO"]) == "999"
+    assert str(produtos_unicos.loc[0, "Ativo"]).lower() == "sim"
+
+
+def test_tratar_duplicatas_le_planilha_operacional_com_cabecalho_deslocado(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    entrada = tmp_path / "Tabela de produtos.xlsx"
+    saida = tmp_path / "relatorios"
+
+    dataframe = pd.DataFrame(
+        [
+            {
+                "Ativo": "Sim",
+                "Prioridade": 1,
+                "Item": "Batata Palha",
+                "COD. SILO": "2218",
+                "DESCRIÇÃO": "BATATA PALHA 1KG (FD-12) - TAICO",
+                "Código de Barras": "7898901982036",
+                "Observação": "Carga inicial",
+            }
+        ]
+    )
+
+    with pd.ExcelWriter(entrada, engine="openpyxl") as writer:
+        pd.DataFrame([["Modelo Operacional"], [""]]).to_excel(
+            writer,
+            sheet_name="cadastro_produtos",
+            header=False,
+            index=False,
+        )
+        dataframe.to_excel(
+            writer,
+            sheet_name="cadastro_produtos",
+            startrow=3,
+            index=False,
+        )
+        pd.DataFrame({"A": ["instrucao"]}).to_excel(
+            writer,
+            sheet_name="instrucoes",
+            index=False,
+        )
+
+    monkeypatch.setattr("tratar_duplicatas._get_report_output_dir", lambda: saida)
+
+    resultado = tratar_duplicatas_produtos(str(entrada))
+    produtos_unicos = pd.read_excel(saida / "produtos_unicos.xlsx")
+
+    assert resultado["qtd_produtos_unicos"] == 1
+    assert produtos_unicos.loc[0, "Item"] == "Batata Palha"
+    assert str(produtos_unicos.loc[0, "COD. SILO"]) == "2218"

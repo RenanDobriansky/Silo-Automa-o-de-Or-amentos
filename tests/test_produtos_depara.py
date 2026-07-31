@@ -75,6 +75,36 @@ def test_carregar_depara_produtos_bloqueia_conflitos_de_codigo(tmp_path: Path) -
         raise AssertionError("Era esperado erro para duplicidade com codigos diferentes.")
 
 
+def test_carregar_depara_produtos_mantem_apenas_codigo_ativo_vigente(tmp_path: Path) -> None:
+    arquivo = tmp_path / "produtos_tratados.xlsx"
+    dataframe = pd.DataFrame(
+        [
+            {
+                ITEM_COLUMN: "Doce de Goiaba",
+                CODE_COLUMN: "100",
+                DESCRIPTION_COLUMN: "Doce ERP Antigo",
+                NORMALIZED_ITEM_COLUMN: "Doce de Goiaba",
+                "Ativo": "Nao",
+                "Prioridade": 1,
+            },
+            {
+                ITEM_COLUMN: "Doce de Goiaba",
+                CODE_COLUMN: "999",
+                DESCRIPTION_COLUMN: "Doce ERP Novo",
+                NORMALIZED_ITEM_COLUMN: "Doce de Goiaba",
+                "Ativo": "Sim",
+                "Prioridade": 10,
+            },
+        ]
+    )
+    dataframe.to_excel(arquivo, index=False)
+
+    resultado = carregar_depara_produtos(str(arquivo))
+
+    assert len(resultado) == 1
+    assert str(resultado.loc[0, CODE_COLUMN]) == "999"
+
+
 def test_buscar_produto_retorna_correspondencia_exata() -> None:
     dataframe = pd.DataFrame(
         [
@@ -96,6 +126,7 @@ def test_buscar_produto_retorna_correspondencia_exata() -> None:
         "descricao_erp": "Milho ERP",
         "score": 100,
         "status": "encontrado_exato",
+        "status_item": "",
     }
 
 
@@ -136,6 +167,25 @@ def test_buscar_produto_retorna_revisar_para_item_exato_marcado_com_revisao() ->
 
     assert resultado["status"] == "revisar"
     assert resultado["score"] == 85
+
+
+def test_buscar_produto_retorna_nao_atendido_quando_item_marcado_na_planilha() -> None:
+    dataframe = pd.DataFrame(
+        [
+            {
+                ITEM_COLUMN: "Abacaxi em Calda",
+                CODE_COLUMN: "",
+                DESCRIPTION_COLUMN: "",
+                NORMALIZED_ITEM_COLUMN: "abacaxi em calda",
+                "Status Item": "Nao atendido",
+            }
+        ]
+    )
+
+    resultado = buscar_produto("Abacaxi em Calda", dataframe)
+
+    assert resultado["status"] == "nao_atendido"
+    assert resultado["status_item"] == "Nao atendido"
 
 
 def test_buscar_produto_retorna_revisar_para_score_intermediario() -> None:

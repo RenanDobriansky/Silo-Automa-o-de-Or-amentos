@@ -68,6 +68,7 @@ def test_gerar_relatorio_conversao_retorna_dataframe_com_colunas_esperadas() -> 
         "sequencia",
         "item_pdf",
         "item_encontrado_tabela",
+        "status_item",
         "codigo_silo",
         "descricao_erp",
         "quantidade_original",
@@ -322,6 +323,10 @@ def test_pode_gerar_txt_so_libera_status_validos() -> None:
     assert status_geracao_txt(df_revisar) == "bloqueado_revisao_manual"
     assert pode_gerar_txt(df_nao_encontrado) is False
     assert status_geracao_txt(df_nao_encontrado) == "bloqueado_nao_encontrado"
+
+    df_nao_atendido = pd.DataFrame([{"status": "nao_atendido"}])
+    assert pode_gerar_txt(df_nao_atendido) is False
+    assert status_geracao_txt(df_nao_atendido) == "bloqueado_nao_atendido"
 
 
 def test_salvar_relatorio_conversao_grava_excel(tmp_path: Path) -> None:

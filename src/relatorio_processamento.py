@@ -23,6 +23,7 @@ REPORT_COLUMNS = [
     "sequencia",
     "item_pdf",
     "item_encontrado_tabela",
+    "status_item",
     "codigo_silo",
     "descricao_erp",
     "quantidade_original",
@@ -68,6 +69,7 @@ def gerar_relatorio_conversao(
                 "sequencia": item.get("sequencia", 0),
                 "item_pdf": item.get("item_pdf", ""),
                 "item_encontrado_tabela": resultado_busca["item_encontrado_tabela"],
+                "status_item": resultado_busca.get("status_item", ""),
                 "codigo_silo": resultado_busca["codigo_silo"],
                 "descricao_erp": resultado_busca["descricao_erp"],
                 "quantidade_original": item.get("qtde", 0),
@@ -143,6 +145,8 @@ def status_geracao_txt(df: pd.DataFrame) -> str:
         return "sem_itens"
 
     statuses = set(df["status"].dropna().astype(str))
+    if "nao_atendido" in statuses:
+        return "bloqueado_nao_atendido"
     if "nao_encontrado" in statuses:
         return "bloqueado_nao_encontrado"
     if "revisar" in statuses:

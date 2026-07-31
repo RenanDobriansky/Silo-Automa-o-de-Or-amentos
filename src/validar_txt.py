@@ -1,7 +1,8 @@
-"""Valida a conversao da OC antes e depois da geracao do TXT NeoGrid."""
+"""Valida a conversao da OC antes e depois da geracao do TXT Syscomp."""
 
 from __future__ import annotations
 
+import os
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -9,8 +10,15 @@ from typing import Any
 import pandas as pd
 
 VALID_RECORD_PREFIXES = {"019", "024", "040", "090"}
-BLOCKING_STATUSES = {"nao_encontrado", "revisar"}
+RECORD_LENGTHS = {
+    "019": 304,
+    "024": 45,
+    "040": 350,
+    "090": 122,
+}
+BLOCKING_STATUSES = {"nao_encontrado", "revisar", "nao_atendido"}
 TOTAL_TOLERANCE = Decimal("0.01")
+TXT_ENCODING = os.getenv("AUTOMACAO_OC_TXT_ENCODING", "ascii")
 
 
 def validar_produtos_convertidos(relatorio_conversao: pd.DataFrame) -> list[str]:
@@ -28,6 +36,10 @@ def validar_produtos_convertidos(relatorio_conversao: pd.DataFrame) -> list[str]
         )
     if "revisar" in statuses:
         erros.append("Existem itens com status 'revisar'. O TXT nao pode ser gerado automaticamente.")
+    if "nao_atendido" in statuses:
+        erros.append(
+            "Existem itens com status 'nao_atendido'. O TXT nao pode ser gerado porque a empresa nao atende esses itens."
+        )
 
     return erros
 
@@ -51,22 +63,35 @@ def validar_total_oc(dados_oc: dict[str, Any]) -> list[str]:
 
 
 def validar_linhas_txt(caminho_txt: str | Path) -> list[str]:
-    """Valida a estrutura basica do TXT NeoGrid gravado em disco."""
+    """Valida a estrutura posicional do TXT aceito pela Syscomp."""
 
     path = Path(caminho_txt)
     if not path.exists():
         return [f"Arquivo TXT nao encontrado: {path}"]
 
-    linhas = [linha.rstrip("\n\r") for linha in path.read_text(encoding="utf-8").splitlines() if linha.strip()]
+    linhas = [
+        linha.rstrip("\n\r")
+        for linha in path.read_text(encoding=TXT_ENCODING).splitlines()
+        if linha.strip()
+    ]
     if not linhas:
         return ["Arquivo TXT vazio."]
 
     erros: list[str] = []
     prefixos = [linha[:3] for linha in linhas]
 
-    for index, prefixo in enumerate(prefixos, start=1):
+    for index, linha in enumerate(linhas, start=1):
+        prefixo = linha[:3]
         if prefixo not in VALID_RECORD_PREFIXES:
             erros.append(f"Linha {index} possui registro invalido: {prefixo}.")
+            continue
+
+        tamanho_esperado = RECORD_LENGTHS[prefixo]
+        if len(linha) != tamanho_esperado:
+            erros.append(
+                f"Linha {index} do registro {prefixo} possui tamanho {len(linha)} "
+                f"mas o esperado e {tamanho_esperado}."
+            )
 
     if prefixos.count("019") != 1:
         erros.append("O arquivo deve conter exatamente um registro 019.")
